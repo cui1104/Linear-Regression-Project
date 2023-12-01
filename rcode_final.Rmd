@@ -1,0 +1,153 @@
+
+---
+title: "Predicting Weight Based on Body Dimensions"
+author: "Henry Cui"
+date: "April 25, 2022"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+header-includes: \usepackage{setspace}\doublespacing
+geometry: margin=2.54cm
+fontsize: 12pt
+---
+
+```{r echo=FALSE, include = FALSE}
+library(knitr)
+library(RSQLite)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(ggmap)
+library(car)
+library(MASS)
+library(leaps)
+library(glmnet)
+
+rawdata <- read.csv("bodydata.csv")
+
+
+set.seed(1)
+rand <- sample.int(507,456)
+traindt <- rawdata[rand,]
+testdt <- rawdata[-rand,]
+table(traindt$Gender)
+fit1 <- lm(Weight~Height+Gender+Height.,data=traindt) # first simple regression
+summary(fit1)
+print(fit1$coefficients)
+
+fit2 <- lm(Weight~.-Weight,data=traindt) # run MLR with all predictors
+summary(fit2)
+which(abs(fit2$coefficients)>0.5)
+
+y = vif(fit2) # check VIF
+which(y<10)
+AIC(fit2)
+BIC(fit2)
+
+#apply variable selection
+fit_null <- lm(Weight~1, data=traindt)
+fit_full <- lm(Weight ~.-Weight,data=traindt)
+
+AICfit <- step(fit_null, scope= list(upper = fit_full), direction = c("forward") )
+AICfit2 <- step(fit_full, scope= list(upper = fit_null), direction = c("backward") )
+
+AICfit$coefficients #AIC = 652.33
+AICfit2$coefficients #AIC = 652.33
+
+n <-  length(traindt$Weight)
+BICfit <- step(fit_null, scope= list(upper = fit_full), direction = c("forward"), k = log(n))
+BICfit2 <- step(fit_full, scope= list(upper = fit_null), direction = c("backward"), k = log(n))
+
+BICfit$coefficients #BIC =718.68
+BICfit2$coefficients #BIC=718.31
+
+vif(BICfit2)
+vif(BICfit)
+vif(AICfit)
+vif(AICfit2)
+
+# run MLR after variable selection
+fit_mlr1 <-  lm(Weight~ChestDepth+Knee+ChestGirth+WaistGirth+HipGirth+ThighGirth+ForearmGirth+CalfMax+Age+Height+Gender+ShoulderGirth.+Height., data=traindt)
+summary(fit_mlr1)
+vif(fit_mlr1)
+
+fit_mlr2 <-  lm(Weight~ChestDepth+Knee+WaistGirth+HipGirth+ThighGirth+ForearmGirth+CalfMax+Age+Height+Gender+ShoulderGirth.+Height., data=traindt)
+summary(fit_mlr2)
+vif(fit_mlr2)
+
+plot(fitted(fit_mlr2),resid(fit_mlr2))
+par(mfrow=c(2,2)) # the diagnostic plots
+plot(fit_mlr2)
+
+# Run lasso and ridge regression
+set.seed(1)
+
+newdt <- testdt[-23]
+
+fit_mlr2 <-  lm(Weight~ChestDepth+Knee+WaistGirth+HipGirth+ThighGirth+ForearmGirth+CalfMax+Age+Height+Gender+ShoulderGirth.+Height., data=traindt)
+set.seed(1)
+y <- fit2$model[,1]
+X = as.matrix(fit2$model[,-1])
+fit.cv = cv.glmnet(X,  # Matrix of predictors (w/o intercept)
+                   y,  # Response
+                   alpha=0, # Corresponds to the penalty (0 for ridge, 1 for lasso)  
+)
+lamb <- fit.cv$lambda.min
+fit_ridge = glmnet(X,  # Matrix of predictors (w/o intercept)
+              y,  # Response
+              alpha=0, # Corresponds to the penalty (0 for ridge, 1 for lasso)  
+              lambda = lamb # lambda sequence
+              )
+y <- fit2$model[,1]
+X = as.matrix(fit2$model[,-1])
+
+fit.cv2 = cv.glmnet(X,  # Matrix of predictors (w/o intercept)
+                   y,  # Response
+                   alpha=1, # Corresponds to the penalty (0 for ridge, 1 for lasso)  
+)
+
+lamb2 <- fit.cv2$lambda.min
+fit_lasso = glmnet(X,  # Matrix of predictors (w/o intercept)
+              y,  # Response
+              alpha=1, # Corresponds to the penalty (0 for ridge, 1 for lasso)  
+              lambda = lamb2 # lambda sequence
+              )
+full_ridge_predict <- predict.glmnet(fit_ridge,newx = as.matrix(newdt),interval = "prediction")
+full_lasso_predict <- predict.glmnet(fit_lasso,newx = as.matrix(newdt),interval="prediction")
+real_weight <- testdt$Weight
+
+# run the model with test data
+
+mlr_predict <- predict(fit_mlr2,newdata = newdt,interval="prediction",level = 0.95)
+
+plot(c(1:51),real_weight,xlab="Individual Index",ylab="Weight",main="Weight of Individuals from Test data",pch=19,ylim=c(38,100))
+points(c(1:51),full_ridge_predict,pch = 6,col="red")
+points(c(1:51),full_lasso_predict,pch = 0,col="blue")
+
+for (j in 1:51){
+segments(x0 = j, y0 = mlr_predict[j,2], x1=j,y1=mlr_predict[j,3],col = "grey")
+}
+
+r <- matrix(nrow=51,ncol=3)
+r[,1]=full_ridge_predict
+r[,2]=full_lasso_predict
+r[,3]=real_weight
+testdiff1 <- r[,1]-r[,3]
+which(testdiff1 == max(testdiff1))
+max(testdiff1)
+which(abs(testdiff1)>1.5)
+which(abs(testdiff1)>3)
+
+testdiff2 <- r[,2]-r[,3]
+which(testdiff2 == max(testdiff2))
+max(testdiff2)
+which(abs(testdiff2)>1.5)
+which(abs(testdiff2)>3)
+
+```
+
+
+
+
